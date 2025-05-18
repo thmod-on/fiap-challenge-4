@@ -1,176 +1,14 @@
+import util
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
-from statsmodels.tsa.stattools import adfuller
-from statsforecast import StatsForecast
-from statsmodels.tsa.stattools import acf, pacf
+from sklearn.metrics import mean_squared_error
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.arima.model import ARIMA
-from pmdarima import auto_arima
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from prophet import Prophet
-from decimal import Decimal
 from datetime import timedelta
-
-#--------------------------------------------------------------------------------------------
-# DEFININDO METODOS
-#--------------------------------------------------------------------------------------------
-
-#Função para calcular a média móvel e o desvio padrão
-#:param df: DataFrame com a coluna 'y'
-#:param window: Janela para calcular a média móvel
-def calcular_ma_std(df, window):
-    df['ma'] = df['y'].rolling(window=window).mean()
-    df['std'] = df['y'].rolling(window=window).std()
-
-#Função para plotar a média móvel e o desvio padrão, bem como nosso dado target
-#:param df: DataFrame com a coluna 'y' e as colunas 'ma' e 'std'
-#:param window: Janela para exibir no label a quantidade de dias
-def plot_ma_std(df, window):
-  fig, ax = plt.subplots(figsize=(16, 6))
-  
-  ax.plot(df.index, df['y'], color='blue', label='Original', alpha=0.5)
-  ax.plot(df.index, df['ma'], color='red', label=f'Média Móvel ({window} dias)', alpha=0.6)
-  ax.fill_between(
-      df.index,
-      df['ma'] - df['std'],
-      df['ma'] + df['std'],
-      color='green',
-      alpha=0.2,
-      label='Desvio Padrão'
-  )
-
-  # Obter dinamicamente os anos que estão no nome do dataFrame
-  str_df = [nome for nome, obj in globals().items() if obj is df][0]
-  anos = str_df.split('_')
-
-  # Configraundo detalhes do gráfico
-  ax.legend(loc='best')
-  ax.set_title(f'Média Móvel e Desvio Padrão ({anos[1]} - {anos[2]})')
-  ax.set_xlabel('Índice')
-  ax.set_ylabel('Valor')
-  ax.grid(True)
-  #ax.tight_layout()
-  #ax.show()
-  return fig
-
-#Função para testar a estacionariedade da série
-#:param serie_valores: Valores da série temporal
-def testar_estacionariedade(serie_valores):
-    result = adfuller(serie_valores)
-    estatistico_teste, p_valor, _, _, valores_criticos, _ = result
-
-    partes = [
-        "Teste ADF - Sendo o teste estatístico e o p-valor maiores que os valores críticos, esta série NÃO é estacionária.",
-        f"Para nosso teste de estacionariedade, vamos considerar um p-valor de 0.05, para rejeitar H0 com 95% de confiança.",
-        f"\nTeste estatístico: {estatistico_teste:.7f}",
-        f"\nP-Value: {p_valor:.7f}",
-        "\nValores críticos:"
-    ]
-
-    partes += [f"\n\t{nivel}: {valor:.4f}" for nivel, valor in valores_criticos.items()]
-    partes.append("Considerando a margem de 5%, temos que:")
-
-    if p_valor > valores_criticos['5%'] and estatistico_teste > valores_criticos['5%']:
-        partes.append("p-valor e teste estatístico são maiores que o limite definido. Logo, esta série NÃO é estacionária.")
-    elif p_valor > valores_criticos['5%']:
-        partes.append("p-valor continua maior que o limite definido.")
-    elif estatistico_teste > valores_criticos['5%']:
-        partes.append("teste estatístico continua maior que o limite definido.")
-    else:
-        partes.append("p-valor e teste estatístico são menores que o limite definido.")
-
-    return "\n".join(partes)
-
-
-#Função para aplicar a diferenciação
-#:param df: DataFrame com a coluna 'y'
-#:return: DataFrame após a diferenciação
-def aplicar_diferenciacao(df):
-  df_diff = pd.DataFrame()
-  df_diff['y'] = df['y'].diff(1).dropna()
-  df_diff.dropna(inplace=True)
-  return df_diff
-      
-#Função para plotar dois gráficos. Um contendo os dados de treino e o outro com os dados de teste e previsão
-#:param s_ds_treino: pd.Series contendo as datas de treino
-#:param s_treino: pd.Series contendo os valores de treino
-#:param s_ds: pd.Series contendo as datas de teste
-#:param s_y: pd.Series contendo os valores de teste
-#:param s_y_pred: pd.Series Valores de previsão
-#:param metodologia: String com o nome do modelo utilizado
-def plot_previsao(s_ds_treino, s_treino, s_ds, s_y, s_y_pred, metodologia):
-  fig, axes = plt.subplots(2, 1, figsize=(15, 8))
-  qt_dias = len(s_y_pred)
-
-  axes[0].plot(s_ds_treino, s_treino, label='Valores Reais', color='blue', alpha=0.5)
-  axes[0].plot(s_ds, s_y, label='Dados de teste', color='green', alpha=0.7)
-  axes[0].plot(s_ds, s_y_pred, label=f'Previsão ({qt_dias} dias)', color='red', alpha=0.7)
-  axes[0].set_title(f'Previsão usando {metodologia} - Dados completos')
-  axes[0].set_ylabel('Valores')
-  axes[0].legend()
-  axes[0].grid()
-
-  axes[1].plot(s_ds, s_y, label='Dados de teste', color='green', alpha=0.7)
-  axes[1].plot(s_ds, s_y_pred, label=f'Previsão ({qt_dias} dias)', marker='^', linestyle='--', color='red', alpha=0.7)
-  axes[1].set_title(f'Previsão usando {metodologia} - Apenas teste e previsão')
-  axes[1].set_ylabel('Valores')
-  axes[1].legend()
-  axes[1].grid()  
-  
-  return fig      
-
-
-#Função para calcular as métricas de avaliação
-#:param y_true: pd.Series com valores reais
-#:param y_pred: pd.Series com valores previstos
-#:param nome_modelo: Nome do modelo
-def calcular_métricas(y_true, y_pred, nome_modelo=''):
-  # Asumindo 'y_true' sendo os valores reais e 'y_pred' as previsões do modelo
-  metrica = []
-
-  # Erro Médio Absoluto (MAE)
-  mae = mean_absolute_error(y_true, y_pred)
-  metrica.append(('MAE:', mae))
-
-  # Erro Quadrático Médio (MSE)
-  mse = mean_squared_error(y_true, y_pred)
-  metrica.append(('MSE:', mse))
-
-  # Raiz do Erro Quadrático Médio (RMSE)
-  rmse = np.sqrt(mse)
-  metrica.append(('RMSE:', rmse))
-
-  # Erro Percentual Absoluto Médio (MAPE)
-  mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-  #mape = Decimal(f"{round(mape, 2):.2f}")
-  mape = round(mape, 2)
-  metrica.append(('MAPE', f"{mape}%"))
-
-  # Coeficiente de Determinação (R²)
-  r2 = r2_score(y_true, y_pred)
-  metrica.append(('R²:', r2))
-
-  # Atualiza DataFrame se fornecido
-  if performance_modelos is not None and nome_modelo != '':
-      nova_linha = {
-          'Modelo': nome_modelo,
-          'MAE': mae,
-          'MSE': mse,
-          'RMSE': rmse,
-          'MAPE': mape,
-          'R2': r2,
-          'Acertividade': 100 - mape
-      }
-
-      if nome_modelo in performance_modelos['Modelo'].values:
-        performance_modelos.loc[performance_modelos['Modelo'] == nome_modelo] = nova_linha
-      else:
-        performance_modelos.loc[len(performance_modelos)] = nova_linha
-
-  return metrica
 
 #--------------------------------------------------------------------------------------------
 # TRATANDO OS DADOS
@@ -209,10 +47,13 @@ st.set_page_config(
   layout='wide'
 )
 st.header('Análise do preço do petróleo com ML')
-
+st.write(f'No momento de escrita deste trabalho os dados mais recentes são de {df_preco["data"].max().strftime("%d-%m-%Y")}')
+st.write(df_preco)
 # Criando um DataFrame para armazenar a performance de treinamento de cada modelo.
 # A ideia também seria armazenar e comparar no final a performance para vários períodos de previsão mas precisaria de mais tempo de codificação
-performance_modelos = pd.DataFrame(columns=['Modelo', 'MAE', 'MSE', 'RMSE', 'MAPE', 'R2', 'Acertividade'])
+if "performance_modelos" not in st.session_state:
+    st.session_state.performance_modelos = pd.DataFrame(columns=['Modelo', 'MAE', 'MSE', 'RMSE', 'MAPE', 'R2', 'Acertividade'])
+
 
 # Definindo uma janela para ser utilizada na previsão
 janela = 5
@@ -221,21 +62,21 @@ janela = 5
 df_preco.drop(columns=['variacao', 'variacao_percentual'], axis=1, inplace=True)
 
 # Realizando a cópia dos dados para um novo DataFrame para termos um backup dos originais antes de começar a transfeormar mais coisas
-st.write(f'No momento de escrita deste trabalho os dados mais recentes são de {df_preco["data"].max().strftime("%d-%m-%Y")}. Iremos utilizar os \
-  dados de aproximdamente um ano pois visualmente não encontramos uma sazonalidade na oscilação dos preços.')
+
 data_inicial = '2024-03-24'
 preco_2024_2025 = df_preco.loc[df_preco['data'] >= data_inicial].copy()
 preco_2024_2025.rename(columns={'data': 'ds', 'preco': 'y'}, inplace=True)
 preco_2024_2025.set_index('ds', inplace=True)
 
-calcular_ma_std(preco_2024_2025, janela)
-
-st.pyplot(plot_ma_std(preco_2024_2025, janela))
+util.calcular_ma_std(preco_2024_2025, janela)
+st.write('Iremos utilizar os dados de aproximdamente um ano pois visualmente não encontramos uma sazonalidade na oscilação dos preços.\
+  \nComo primeiro passo, vamos olhar para a média móvel e desvio padrão neste período.')
+st.pyplot(util.plot_ma_std(preco_2024_2025, janela))
 
 #------------------------------------------------------------------------------------
 st.title('1. Testando a estacionariedade')
 #------------------------------------------------------------------------------------
-st.write(testar_estacionariedade(preco_2024_2025["y"].values))
+st.write(util.testar_estacionariedade(preco_2024_2025["y"].values))
 
 st.write('## 1.1 Tentando estacionar a série')
 st.write('Para tentar estacionar a série, vamos aplicar uma função logarítmica no dataframe, em seguida vamos calcular uma nova média móvel. \
@@ -246,7 +87,7 @@ preco_2024_2025_log = pd.DataFrame()
 preco_2024_2025_log['y'] = np.log(preco_2024_2025['y'])
 
 # Claculando uma nova média móvel
-calcular_ma_std(preco_2024_2025_log, janela)
+util.calcular_ma_std(preco_2024_2025_log, janela)
 
 # Subtraindo a média móvel
 preco_2024_2025_s = pd.DataFrame()
@@ -254,20 +95,20 @@ preco_2024_2025_s['y'] = (preco_2024_2025_log['y'] - preco_2024_2025_log['ma']).
 preco_2024_2025_s.dropna(inplace=True)
 
 # Claculando uma nova média móvel
-calcular_ma_std(preco_2024_2025_s, janela)
+util.calcular_ma_std(preco_2024_2025_s, janela)
 
 # Analisando visualmente as mudanças
-st.pyplot(plot_ma_std(preco_2024_2025_s, janela))
+st.pyplot(util.plot_ma_std(preco_2024_2025_s, janela))
 
 st.write('Com este novo resultado, vamos diferenciar a série e calcular sua estacionariedade. Levando ao gráfico:')
 # Diferenciando a série
-preco_2024_2025_diff = aplicar_diferenciacao(preco_2024_2025_s)
+preco_2024_2025_diff = util.aplicar_diferenciacao(preco_2024_2025_s)
 # Claculando uma nova média móvel
-calcular_ma_std(preco_2024_2025_diff, janela)
+util.calcular_ma_std(preco_2024_2025_diff, janela)
 # Analisando visualmente as mudanças
-st.pyplot(plot_ma_std(preco_2024_2025_diff, janela))
+st.pyplot(util.plot_ma_std(preco_2024_2025_diff, janela))
 
-st.write(testar_estacionariedade(preco_2024_2025_diff['y'].values))
+st.write(util.testar_estacionariedade(preco_2024_2025_diff['y'].values))
 st.write('Com a diferenciação o p-valor ficou muito próximo a zero e isso sugere que a série temporal foi excessivamente transformada')
 
 #------------------------------------------------------------------------------------
@@ -303,6 +144,10 @@ treino_2024_2025.set_index('ds', inplace=True)
 st.write(f'Treino: de {treino_2024_2025.index.min().strftime("%d-%m-%Y")} a {treino_2024_2025.index.max().strftime("%d-%m-%Y")} - {treino_2024_2025.shape[0]} dias \
   \nTeste: de {teste_2024_20245.index.min().strftime("%d-%m-%Y")} a {teste_2024_20245.index.max().strftime("%d-%m-%Y")} - {teste_2024_20245.shape[0]} dias')
 
+
+compilado_2024_2025 = pd.DataFrame({'ds': teste_2024_20245.index, 'y': teste_2024_20245.values.ravel()})
+
+
 if st.button('Processar ARIMA'):
     with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
         # passando os dados do PACF/ACF
@@ -310,12 +155,18 @@ if st.button('Processar ARIMA'):
         arima_2024_2025 = modelo.fit()
         # Previsões no conjunto de teste
         arima_y_pred = arima_2024_2025.forecast(steps=len(teste_2024_20245))
+        
+        
         # Criando novo DF para facilitar a visualização e comparação dos dados dos outros modelos
-        compilado_2024_2025 = pd.DataFrame({'ds': teste_2024_20245.index, 'y': teste_2024_20245.values.ravel(), 'y_pred_arima': arima_y_pred})
+        #compilado_2024_2025 = pd.DataFrame({'ds': teste_2024_20245.index, 'y': teste_2024_20245.values.ravel(), 'y_pred_arima': arima_y_pred})
+        compilado_2024_2025['y_pred_arima'] = arima_y_pred
+        
+        
         # Criando novo DF para facilitar a visualização e comparação dos dados dos outros modelos
         compilado_2024_2025['y_pred_arima'] = arima_y_pred
-        st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_arima'], 'ARIMA_2024_2025'))
-        st.pyplot(plot_previsao(treino_2024_2025.index,
+        resultado, st.session_state.performance_modelos = util.calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_arima'], st.session_state.performance_modelos, 'ARIMA_2024_2025')
+        st.write(resultado)
+        st.pyplot(util.plot_previsao(treino_2024_2025.index,
                     treino_2024_2025.values,
                     compilado_2024_2025['ds'],
                     compilado_2024_2025['y'],
@@ -362,6 +213,7 @@ st.write(f"Melhor Seasonal_Period: {melhor_periodo}, com RMSE: {melhor_rmse}")
 st.write(df_resultados)
 
 if st.button('Processar Holt-Winters'):
+  with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
     # Com base nos testes anteriores, vamos utilizar o parâmetro de melhor
     # desempenho, vamos treinar, prever e armazenar o resultado deste modelo
     compilado_2024_2025['y_pred_hw'] = ExponentialSmoothing(treino_2024_2025.values, 
@@ -370,14 +222,16 @@ if st.button('Processar Holt-Winters'):
                                                             seasonal_periods=24).fit().forecast(len(teste_2024_20245.values))
 
     st.write('Treinando o modelo com os dados selecionados temos:')
-    st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_hw'], 'Holt-Winters_2024_2025'))
-    st.pyplot(plot_previsao(treino_2024_2025.index,
+    resultado, st.session_state.performance_modelos = util.calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_hw'], st.session_state.performance_modelos, 'Holt-Winters_2024_2025')
+    st.write(resultado)
+    st.pyplot(util.plot_previsao(treino_2024_2025.index,
                 treino_2024_2025.values,
                 compilado_2024_2025['ds'],
                 compilado_2024_2025['y'],
                 compilado_2024_2025['y_pred_hw'],
                 'Holt-Winters')
             )
+    status.update(label="Processamento concluído ✅", state="complete")
 
 st.write('# 2.3 Prophet')
 st.write('Para este modelo, não temos tantos hiperparâmetros para serem passados')
@@ -391,6 +245,7 @@ teste_2024_2025_ppt['ds'] = teste_2024_20245.index
 teste_2024_2025_ppt['y'] = teste_2024_20245.values
 
 if st.button('Processar Prophet'):
+  with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
     # Treinar o modelo
     modelo_ppt_2024_2025 = Prophet(interval_width=0.90, daily_seasonality=True)
     modelo_ppt_2024_2025.fit(treino_2024_2025_ppt)
@@ -405,13 +260,16 @@ if st.button('Processar Prophet'):
     # Armazenar as previsões do modelo
     compilado_2024_2025['y_pred_ppt'] = previsoes_ppt_2019_2023['yhat']
 
-    st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_ppt'], 'Prophet_2024_2025'))
-    st.pyplot(plot_previsao(treino_2024_2025_ppt['ds'],
+    resultado, st.session_state.performance_modelos = util.calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_ppt'], st.session_state.performance_modelos, 'Prophet_2024_2025')
+    st.write(resultado)
+    st.pyplot(util.plot_previsao(treino_2024_2025_ppt['ds'],
                 treino_2024_2025_ppt['y'],
                 compilado_2024_2025['ds'],
                 compilado_2024_2025['y'],
                 compilado_2024_2025['y_pred_ppt'],
                 'Prophet_2024_2025'))
+    
+    status.update(label="Processamento concluído ✅", state="complete")
 
 #------------------------------------------------------------------------------------
 st.title('3. Prevendo dados futuros')
@@ -422,7 +280,7 @@ st.write('Compilado dos processamentos:')
 if st.button('Exibir dados'):
     # Vamos copiar os dados de desempenho para um novo DataFrame
     # Isso para podermos realizar algumas manipulações sem quebrar o original caso desejemos rodar novamente algum teste passado
-    performance_final = performance_modelos.copy()
+    performance_final = st.session_state.performance_modelos.copy()
     performance_final.set_index('Modelo',  inplace=True)
     st.write(performance_final.sort_values(by='Acertividade', ascending=False))
 
@@ -432,6 +290,7 @@ st.write('Neste trabalho utilizamos como parâmetro de escolha a acertividade. C
   os dados de treino e teste para serem o treino e o "teste" será a previsão')
 
 if st.button('Realizar previsão'):
+  with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
     # utilizando os dados do último ano
     df_treino_final = pd.DataFrame()
     df_treino_final['ds'] = df_preco.loc[(df_preco['data'] >= data_inicial)]['data']
@@ -450,12 +309,11 @@ if st.button('Realizar previsão'):
     datas_previsao = pd.date_range(start=data_inicial, periods=len(previsao), freq="D")
 
     st.write('As datas exibidas não está considerando se dia útil assim como vieram os dados utilizados até o momento')
-    st.pyplot(plot_previsao(
+    st.pyplot(util.plot_previsao(
         df_treino_final['ds'],
         df_treino_final['y'],
         datas_previsao,
         previsao,
         previsao,
-        'Holt-Winters'
-    )
-    )
+        'Holt-Winters'))
+    status.update(label="Processamento concluído ✅", state="complete")
