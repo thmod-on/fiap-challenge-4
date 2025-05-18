@@ -48,7 +48,25 @@ st.set_page_config(
 )
 st.header('Análise do preço do petróleo com ML')
 st.write(f'No momento de escrita deste trabalho os dados mais recentes são de {df_preco["data"].max().strftime("%d-%m-%Y")}')
-st.write(df_preco)
+df_preco_exibicao = df_preco.copy()
+#df_preco_exibicao['data'] = df_preco_exibicao['data'].dt.strftime('%d-%m-%Y')
+df_preco_exibicao = df_preco_exibicao.rename(columns={'data':'Data', 
+                                                      'preco':'Preço (US$)', 
+                                                      'variacao':'Variação', 
+                                                      'variacao_percentual': 'Variação %'})
+data_inicio_tabela, data_fim_tabela = st.date_input(
+  "Selecione o período:",
+  [df_preco_exibicao['Data'].min(),
+  df_preco_exibicao['Data'].max()]
+)
+df_filtrado = df_preco_exibicao[(df_preco_exibicao["Data"] >= pd.to_datetime(data_inicio_tabela)) & (df_preco_exibicao["Data"] <= pd.to_datetime(data_fim_tabela))]
+
+if df_filtrado.empty:
+    st.warning("Nenhum dado encontrado para o período selecionado.")
+else:
+    st.success("Dados filtrados com sucesso!")
+    st.dataframe(df_filtrado)
+
 # Criando um DataFrame para armazenar a performance de treinamento de cada modelo.
 # A ideia também seria armazenar e comparar no final a performance para vários períodos de previsão mas precisaria de mais tempo de codificação
 if "performance_modelos" not in st.session_state:
@@ -114,7 +132,6 @@ st.write('Com a diferenciação o p-valor ficou muito próximo a zero e isso sug
 #------------------------------------------------------------------------------------
 st.title('2. Treinando modelos')
 #------------------------------------------------------------------------------------
-dias_previsao = st.slider('Dias a serem previstos', 1, 10)
 
 st.write('# 2.1 ARIMA')
 st.write('## 2.1.1 Teste ACF/PACF')
