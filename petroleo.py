@@ -221,7 +221,8 @@ janela = 5
 df_preco.drop(columns=['variacao', 'variacao_percentual'], axis=1, inplace=True)
 
 # Realizando a cópia dos dados para um novo DataFrame para termos um backup dos originais antes de começar a transfeormar mais coisas
-st.write(f'No momento de escrita deste trabalho os dados mais recentes são de {df_preco["data"].max()}. Iremos utilizar os dados de aproximdamente um ano')
+st.write(f'No momento de escrita deste trabalho os dados mais recentes são de {df_preco["data"].max().strftime("%d-%m-%Y")}. Iremos utilizar os \
+  dados de aproximdamente um ano pois visualmente não encontramos uma sazonalidade na oscilação dos preços.')
 data_inicial = '2024-03-24'
 preco_2024_2025 = df_preco.loc[df_preco['data'] >= data_inicial].copy()
 preco_2024_2025.rename(columns={'data': 'ds', 'preco': 'y'}, inplace=True)
@@ -232,11 +233,11 @@ calcular_ma_std(preco_2024_2025, janela)
 st.pyplot(plot_ma_std(preco_2024_2025, janela))
 
 #------------------------------------------------------------------------------------
-st.title('Testando a estacionariedade')
+st.title('1. Testando a estacionariedade')
 #------------------------------------------------------------------------------------
 st.write(testar_estacionariedade(preco_2024_2025["y"].values))
 
-st.write('## Tentando estacionar a série')
+st.write('## 1.1 Tentando estacionar a série')
 st.write('Para tentar estacionar a série, vamos aplicar uma função logarítmica no dataframe, em seguida vamos calcular uma nova média móvel. \
   Este valor será utilizado para subitrair do resultado da operação logarítimica. Por fim, uma nova média móvel será  analisada')
 
@@ -270,12 +271,12 @@ st.write(testar_estacionariedade(preco_2024_2025_diff['y'].values))
 st.write('Com a diferenciação o p-valor ficou muito próximo a zero e isso sugere que a série temporal foi excessivamente transformada')
 
 #------------------------------------------------------------------------------------
-st.title('Treinando modelos')
+st.title('2. Treinando modelos')
 #------------------------------------------------------------------------------------
 dias_previsao = st.slider('Dias a serem previstos', 1, 10)
 
-st.write('# ARIMA')
-st.write('## Teste ACF/PACF')
+st.write('# 2.1 ARIMA')
+st.write('## 2.1.1 Teste ACF/PACF')
 st.write('Não conseguimos estacionar a série, vamos então trabalhar com os dados iniciais')
 preco_2024_2025.drop(columns=['ma', 'std'], axis=1, inplace=True)
 
@@ -289,7 +290,7 @@ plot_acf(preco_2024_2025['y'], ax=axes[0], lags=120, title="Função de Autocorr
 plot_pacf(preco_2024_2025['y'], ax=axes[1], lags=10, title="Função de Autocorrelação Parcial (PACF)", method="ywm")
 st.pyplot(fig)
 
-st.write('## Análise do modelo')
+st.write('## 2.1.2 Análise do modelo')
 
 teste_2024_20245 = df_preco.iloc[-10:].copy()
 teste_2024_20245.rename(columns={'data': 'ds', 'preco': 'y'}, inplace=True)
@@ -302,26 +303,29 @@ treino_2024_2025.set_index('ds', inplace=True)
 st.write(f'Treino: de {treino_2024_2025.index.min().strftime("%d-%m-%Y")} a {treino_2024_2025.index.max().strftime("%d-%m-%Y")} - {treino_2024_2025.shape[0]} dias \
   \nTeste: de {teste_2024_20245.index.min().strftime("%d-%m-%Y")} a {teste_2024_20245.index.max().strftime("%d-%m-%Y")} - {teste_2024_20245.shape[0]} dias')
 
-# passando os dados do PACF/ACF
-modelo = ARIMA(treino_2024_2025.values, order=(2, 1, 104)) # Ajustar os parâmetros (p, d, q)
-arima_2024_2025 = modelo.fit()
-# Previsões no conjunto de teste
-arima_y_pred = arima_2024_2025.forecast(steps=len(teste_2024_20245))
-# Criando novo DF para facilitar a visualização e comparação dos dados dos outros modelos
-compilado_2024_2025 = pd.DataFrame({'ds': teste_2024_20245.index, 'y': teste_2024_20245.values.ravel(), 'y_pred_arima': arima_y_pred})
-# Criando novo DF para facilitar a visualização e comparação dos dados dos outros modelos
-compilado_2024_2025['y_pred_arima'] = arima_y_pred
-st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_arima'], 'ARIMA_2024_2025'))
-st.pyplot(plot_previsao(treino_2024_2025.index,
-              treino_2024_2025.values,
-              compilado_2024_2025['ds'],
-              compilado_2024_2025['y'],
-              compilado_2024_2025['y_pred_arima'],
-              'ARIMA')
-          )
+if st.button('Processar ARIMA'):
+    with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
+        # passando os dados do PACF/ACF
+        modelo = ARIMA(treino_2024_2025.values, order=(2, 1, 104)) # Ajustar os parâmetros (p, d, q)
+        arima_2024_2025 = modelo.fit()
+        # Previsões no conjunto de teste
+        arima_y_pred = arima_2024_2025.forecast(steps=len(teste_2024_20245))
+        # Criando novo DF para facilitar a visualização e comparação dos dados dos outros modelos
+        compilado_2024_2025 = pd.DataFrame({'ds': teste_2024_20245.index, 'y': teste_2024_20245.values.ravel(), 'y_pred_arima': arima_y_pred})
+        # Criando novo DF para facilitar a visualização e comparação dos dados dos outros modelos
+        compilado_2024_2025['y_pred_arima'] = arima_y_pred
+        st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_arima'], 'ARIMA_2024_2025'))
+        st.pyplot(plot_previsao(treino_2024_2025.index,
+                    treino_2024_2025.values,
+                    compilado_2024_2025['ds'],
+                    compilado_2024_2025['y'],
+                    compilado_2024_2025['y_pred_arima'],
+                    'ARIMA')
+                )
+        status.update(label="Processamento concluído ✅", state="complete")
 
-st.write('# Holt Winters')
-st.write('## Escolha de parâmetros')
+st.write('# 2.2 Holt Winters')
+st.write('## 2.2.1 Escolha de parâmetros')
 # Vamos aplicar um novo modelo de treinamento
 # Dados de treino e teste
 treino = treino_2024_2025.values
@@ -357,24 +361,25 @@ df_resultados = pd.DataFrame(resultados, columns=['Seasonal_Period', 'RMSE'])
 st.write(f"Melhor Seasonal_Period: {melhor_periodo}, com RMSE: {melhor_rmse}")
 st.write(df_resultados)
 
-# Com base nos testes anteriores, vamos utilizar o parâmetro de melhor
-# desempenho, vamos treinar, prever e armazenar o resultado deste modelo
-compilado_2024_2025['y_pred_hw'] = ExponentialSmoothing(treino_2024_2025.values, 
-                                                        trend='add', 
-                                                        seasonal='add', 
-                                                        seasonal_periods=24).fit().forecast(len(teste_2024_20245.values))
+if st.button('Processar Holt-Winters'):
+    # Com base nos testes anteriores, vamos utilizar o parâmetro de melhor
+    # desempenho, vamos treinar, prever e armazenar o resultado deste modelo
+    compilado_2024_2025['y_pred_hw'] = ExponentialSmoothing(treino_2024_2025.values, 
+                                                            trend='add', 
+                                                            seasonal='add', 
+                                                            seasonal_periods=24).fit().forecast(len(teste_2024_20245.values))
 
-st.write('Treinando o modelo com os dados selecionados temos:')
-st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_hw'], 'Holt-Winters_2024_2025'))
-st.pyplot(plot_previsao(treino_2024_2025.index,
-              treino_2024_2025.values,
-              compilado_2024_2025['ds'],
-              compilado_2024_2025['y'],
-              compilado_2024_2025['y_pred_hw'],
-              'Holt-Winters')
-          )
+    st.write('Treinando o modelo com os dados selecionados temos:')
+    st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_hw'], 'Holt-Winters_2024_2025'))
+    st.pyplot(plot_previsao(treino_2024_2025.index,
+                treino_2024_2025.values,
+                compilado_2024_2025['ds'],
+                compilado_2024_2025['y'],
+                compilado_2024_2025['y_pred_hw'],
+                'Holt-Winters')
+            )
 
-st.write('# Prophet')
+st.write('# 2.3 Prophet')
 st.write('Para este modelo, não temos tantos hiperparâmetros para serem passados')
 # Preparando os dados de treino e teste para o modelo, sempre considerando o base dos anteriores
 treino_2024_2025_ppt = pd.DataFrame()
@@ -385,69 +390,72 @@ teste_2024_2025_ppt = pd.DataFrame()
 teste_2024_2025_ppt['ds'] = teste_2024_20245.index
 teste_2024_2025_ppt['y'] = teste_2024_20245.values
 
-# Treinar o modelo
-modelo_ppt_2024_2025 = Prophet(interval_width=0.90, daily_seasonality=True)
-modelo_ppt_2024_2025.fit(treino_2024_2025_ppt)
+if st.button('Processar Prophet'):
+    # Treinar o modelo
+    modelo_ppt_2024_2025 = Prophet(interval_width=0.90, daily_seasonality=True)
+    modelo_ppt_2024_2025.fit(treino_2024_2025_ppt)
 
-# Gerar datas futuras
-previsao_ppt_2019_2023 = modelo_ppt_2024_2025.make_future_dataframe(periods=len(teste_2024_2025_ppt))
+    # Gerar datas futuras
+    previsao_ppt_2019_2023 = modelo_ppt_2024_2025.make_future_dataframe(periods=len(teste_2024_2025_ppt))
 
-# Fazer a previsão
-previsoes_ppt_2019_2023 = modelo_ppt_2024_2025.predict(previsao_ppt_2019_2023)
-previsoes_ppt_2019_2023['ds'] = previsoes_ppt_2019_2023['ds'].dt.date
+    # Fazer a previsão
+    previsoes_ppt_2019_2023 = modelo_ppt_2024_2025.predict(previsao_ppt_2019_2023)
+    previsoes_ppt_2019_2023['ds'] = previsoes_ppt_2019_2023['ds'].dt.date
 
-# Armazenar as previsões do modelo
-compilado_2024_2025['y_pred_ppt'] = previsoes_ppt_2019_2023['yhat']
+    # Armazenar as previsões do modelo
+    compilado_2024_2025['y_pred_ppt'] = previsoes_ppt_2019_2023['yhat']
 
-st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_ppt'], 'Prophet_2024_2025'))
-st.pyplot(plot_previsao(treino_2024_2025_ppt['ds'],
-              treino_2024_2025_ppt['y'],
-              compilado_2024_2025['ds'],
-              compilado_2024_2025['y'],
-              compilado_2024_2025['y_pred_ppt'],
-              'Prophet_2024_2025'))
+    st.write(calcular_métricas(compilado_2024_2025['y'], compilado_2024_2025['y_pred_ppt'], 'Prophet_2024_2025'))
+    st.pyplot(plot_previsao(treino_2024_2025_ppt['ds'],
+                treino_2024_2025_ppt['y'],
+                compilado_2024_2025['ds'],
+                compilado_2024_2025['y'],
+                compilado_2024_2025['y_pred_ppt'],
+                'Prophet_2024_2025'))
 
 #------------------------------------------------------------------------------------
-st.title('Prevendo dados futuros')
+st.title('3. Prevendo dados futuros')
 #------------------------------------------------------------------------------------
-st.write('# Escolhendo modelo')
+st.write('# 3.1 Escolhendo modelo')
 st.write('Compilado dos processamentos:')
 
-# Vamos copiar os dados de desempenho para um novo DataFrame
-# Isso para podermos realizar algumas manipulações sem quebrar o original caso desejemos rodar novamente algum teste passado
-performance_final = performance_modelos.copy()
-performance_final.set_index('Modelo',  inplace=True)
-st.write(performance_final.sort_values(by='Acertividade', ascending=False))
+if st.button('Exibir dados'):
+    # Vamos copiar os dados de desempenho para um novo DataFrame
+    # Isso para podermos realizar algumas manipulações sem quebrar o original caso desejemos rodar novamente algum teste passado
+    performance_final = performance_modelos.copy()
+    performance_final.set_index('Modelo',  inplace=True)
+    st.write(performance_final.sort_values(by='Acertividade', ascending=False))
 
-st.write('# Aplicando o modelo')
+st.write('# 3.2 Aplicando o modelo')
 st.write('Neste trabalho utilizamos como parâmetro de escolha a acertividade. Consultando a tabela anterior, o \
   modelo Holt-Winters será o escolhido para realisar a previsão de dados que não temos. Para isto iremos juntar \
   os dados de treino e teste para serem o treino e o "teste" será a previsão')
 
-# utilizando os dados do último ano
-df_treino_final = pd.DataFrame()
-df_treino_final['ds'] = df_preco.loc[(df_preco['data'] >= data_inicial)]['data']
-df_treino_final['y'] = df_preco.loc[(df_preco['data'] >= data_inicial)]['preco']
+if st.button('Realizar previsão'):
+    # utilizando os dados do último ano
+    df_treino_final = pd.DataFrame()
+    df_treino_final['ds'] = df_preco.loc[(df_preco['data'] >= data_inicial)]['data']
+    df_treino_final['y'] = df_preco.loc[(df_preco['data'] >= data_inicial)]['preco']
 
-modelo = ExponentialSmoothing(df_treino_final['y'], trend='add', seasonal='add', seasonal_periods=24)
-modelo_ajustado = modelo.fit()
+    modelo = ExponentialSmoothing(df_treino_final['y'], trend='add', seasonal='add', seasonal_periods=24)
+    modelo_ajustado = modelo.fit()
 
-# Prevendo os proximos 5 valores
-previsao = modelo_ajustado.forecast(5)
-st.write('valores previstos:')
-st.write(previsao)
+    # Prevendo os proximos 5 valores
+    previsao = modelo_ajustado.forecast(5)
+    st.write('valores previstos:')
+    st.write(previsao)
 
-# Criando possíveis datas para os valores previstos
-data_inicial = df_treino_final['ds'].max() + timedelta(days=1)
-datas_previsao = pd.date_range(start=data_inicial, periods=len(previsao), freq="D")
+    # Criando possíveis datas para os valores previstos
+    data_inicial = df_treino_final['ds'].max() + timedelta(days=1)
+    datas_previsao = pd.date_range(start=data_inicial, periods=len(previsao), freq="D")
 
-st.write('As datas exibidas não está considerando se dia útil assim como vieram os dados utilizados até o momento')
-st.pyplot(plot_previsao(
-    df_treino_final['ds'],
-    df_treino_final['y'],
-    datas_previsao,
-    previsao,
-    previsao,
-    'Holt-Winters'
-  )
-)
+    st.write('As datas exibidas não está considerando se dia útil assim como vieram os dados utilizados até o momento')
+    st.pyplot(plot_previsao(
+        df_treino_final['ds'],
+        df_treino_final['y'],
+        datas_previsao,
+        previsao,
+        previsao,
+        'Holt-Winters'
+    )
+    )
