@@ -57,7 +57,7 @@ df_preco_exibicao = df_preco_exibicao.rename(columns={'data':'Data',
                                                       'variacao_percentual': 'Variação %'})
 
 data_inicio_tabela, data_fim_tabela = st.date_input(
-  "Selecione o período:",
+  ":blue[Selecione o período:]",
   [df_preco_exibicao['Data'].min(),
   df_preco_exibicao['Data'].max()]
 )
@@ -174,14 +174,20 @@ treino_2024_2025.set_index('ds', inplace=True)
 st.write(f'Treino: de {treino_2024_2025.index.min().strftime("%d-%m-%Y")} a {treino_2024_2025.index.max().strftime("%d-%m-%Y")} - {treino_2024_2025.shape[0]} dias \
   \nTeste: de {teste_2024_20245.index.min().strftime("%d-%m-%Y")} a {teste_2024_20245.index.max().strftime("%d-%m-%Y")} - {teste_2024_20245.shape[0]} dias')
 
-
 compilado_2024_2025 = pd.DataFrame({'ds': teste_2024_20245.index, 'y': teste_2024_20245.values.ravel()})
 
+col1_arima, col2_arima, col3_arima = st.columns(3)
+with col1_arima:
+  input_p = st.number_input(':blue[Valor de "p"]', 0, 10, 2)
+with col2_arima:
+  input_d = st.number_input(':blue[Valor de "d"]', 0, 5, 1)
+with col3_arima:
+  input_q = st.number_input(':blue[Valor de "q"]', 0, 120, 104)
 
 if st.button('Processar ARIMA'):
     with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
         # passando os dados do PACF/ACF
-        modelo = ARIMA(treino_2024_2025.values, order=(2, 1, 104)) # Ajustar os parâmetros (p, d, q)
+        modelo = ARIMA(treino_2024_2025.values, order=(input_p, input_d, input_q)) # Ajustar os parâmetros (p, d, q)
         arima_2024_2025 = modelo.fit()
         # Previsões no conjunto de teste
         arima_y_pred = arima_2024_2025.forecast(steps=len(teste_2024_20245))
