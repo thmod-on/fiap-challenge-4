@@ -39,14 +39,15 @@ df_preco['variacao_percentual'] = (df_preco['preco'].pct_change() * 100).round(2
 df_preco['variacao_percentual'] = df_preco['variacao_percentual'].fillna(0)
 
 #--------------------------------------------------------------------------------------------
-# USANDO ML PARA ANALISAR OS DADOS
+# EXIBINDO DADOS INICIAIS
 #--------------------------------------------------------------------------------------------
 
 st.set_page_config(
   page_title='FIAP - Petróleo com ML',
   layout='wide'
 )
-st.header('Análise do preço do petróleo com ML')
+st.header('Previsão do preço do petróleo com ML')
+st.write('## Dados iniciais')
 st.write(f'No momento de escrita deste trabalho os dados mais recentes são de {df_preco["data"].max().strftime("%d-%m-%Y")}')
 df_preco_exibicao = df_preco.copy()
 #df_preco_exibicao['data'] = df_preco_exibicao['data'].dt.strftime('%d-%m-%Y')
@@ -54,6 +55,7 @@ df_preco_exibicao = df_preco_exibicao.rename(columns={'data':'Data',
                                                       'preco':'Preço (US$)', 
                                                       'variacao':'Variação', 
                                                       'variacao_percentual': 'Variação %'})
+
 data_inicio_tabela, data_fim_tabela = st.date_input(
   "Selecione o período:",
   [df_preco_exibicao['Data'].min(),
@@ -67,11 +69,21 @@ else:
     st.success("Dados filtrados com sucesso!")
     st.dataframe(df_filtrado)
 
+col1_variacao, col2_variacao = st.columns(2)
+with col1_variacao:
+  st.markdown(f':orange[Variação média:] {df_filtrado["Variação"].mean():.2f}')
+with col2_variacao:
+  st.markdown(f':orange[Variação % média:] {df_filtrado["Variação %"].mean():.2f}')  
+
+#--------------------------------------------------------------------------------------------
+# SEPARANDO DADOS PARA ML E TREINANDO MODELOS
+#--------------------------------------------------------------------------------------------
+
+st.write('## Análise dos dados')
 # Criando um DataFrame para armazenar a performance de treinamento de cada modelo.
 # A ideia também seria armazenar e comparar no final a performance para vários períodos de previsão mas precisaria de mais tempo de codificação
 if "performance_modelos" not in st.session_state:
     st.session_state.performance_modelos = pd.DataFrame(columns=['Modelo', 'MAE', 'MSE', 'RMSE', 'MAPE', 'R2', 'Acertividade'])
-
 
 # Definindo uma janela para ser utilizada na previsão
 janela = 5
@@ -87,7 +99,8 @@ preco_2024_2025.rename(columns={'data': 'ds', 'preco': 'y'}, inplace=True)
 preco_2024_2025.set_index('ds', inplace=True)
 
 util.calcular_ma_std(preco_2024_2025, janela)
-st.write('Iremos utilizar os dados de aproximdamente um ano pois visualmente não encontramos uma sazonalidade na oscilação dos preços.\
+st.write('Iremos utilizar os dados de aproximdamente um ano pois visualmente não encontramos uma sazonalidade na oscilação dos \
+  preços (como proposta de melhoria, estes dados poderiam ser analisados de forma dinâmica, trazendo outras perspectivas para a análise).\
   \nComo primeiro passo, vamos olhar para a média móvel e desvio padrão neste período.')
 st.pyplot(util.plot_ma_std(preco_2024_2025, janela))
 
@@ -205,32 +218,36 @@ melhor_rmse = float('inf')
 resultados = []
 
 st.write('Para tentar melhorar sua performance, vamos rodar aproximadamente 60 testes usando "ExponentialSmoothing" e escolher o melhor (menor RMSE)')
-for periodo in range(2, 60):
-    # Ajustando o modelo
-    modelo = ExponentialSmoothing(treino, trend='add', seasonal='add', seasonal_periods=periodo)
-    modelo_ajustado = modelo.fit()
 
-    # Fazendo previsões
-    previsoes = modelo_ajustado.forecast(len(teste))
-
-    # Calculando RMSE
-    rmse = mean_squared_error(teste, previsoes)
-    resultados.append((periodo, rmse))
-
-    # Atualizando o melhor período
-    if rmse < melhor_rmse:
-        melhor_rmse = rmse
-        melhor_periodo = periodo
-
-# Criando um DataFrame com os resultados
-df_resultados = pd.DataFrame(resultados, columns=['Seasonal_Period', 'RMSE'])
-
-# Exibindo o melhor resultado
-st.write(f"Melhor Seasonal_Period: {melhor_periodo}, com RMSE: {melhor_rmse}")
-st.write(df_resultados)
 
 if st.button('Processar Holt-Winters'):
   with st.status("Isso pode demorar um pouco. Processando... ⏳", expanded=True) as status:
+    
+    for periodo in range(2, 60):
+      # Ajustando o modelo
+      modelo = ExponentialSmoothing(treino, trend='add', seasonal='add', seasonal_periods=periodo)
+      modelo_ajustado = modelo.fit()
+
+      # Fazendo previsões
+      previsoes = modelo_ajustado.forecast(len(teste))
+
+      # Calculando RMSE
+      rmse = mean_squared_error(teste, previsoes)
+      resultados.append((periodo, rmse))
+
+      # Atualizando o melhor período
+      if rmse < melhor_rmse:
+          melhor_rmse = rmse
+          melhor_periodo = periodo
+
+    # Criando um DataFrame com os resultados
+    df_resultados = pd.DataFrame(resultados, columns=['Seasonal_Period', 'RMSE'])
+
+    # Exibindo o melhor resultado
+    st.markdown(f":orange[Melhor Seasonal_Period:] {melhor_periodo}, com :orange[RMSE:] {melhor_rmse}")
+    st.write(df_resultados)
+    
+    
     # Com base nos testes anteriores, vamos utilizar o parâmetro de melhor
     # desempenho, vamos treinar, prever e armazenar o resultado deste modelo
     compilado_2024_2025['y_pred_hw'] = ExponentialSmoothing(treino_2024_2025.values, 

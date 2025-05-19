@@ -38,8 +38,7 @@ def plot_ma_std(df, window):
   ax.set_xlabel('Índice')
   ax.set_ylabel('Valor')
   ax.grid(True)
-  #ax.tight_layout()
-  #ax.show()
+  
   return fig
 
 #Função para testar a estacionariedade da série
